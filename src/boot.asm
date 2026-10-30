@@ -1,11 +1,14 @@
-; AQ OS - Multiboot v1 entry
-; Graphics mode is selected by GRUB, not requested in the Multiboot header.
+; AQ OS - Multiboot v1 header requesting a linear 640x480x32 mode
 BITS 32
 section .multiboot
 align 4
     dd 0x1BADB002
-    dd 0x00000003
-    dd -(0x1BADB002 + 0x00000003)
+    dd 0x00000007
+    dd -(0x1BADB002 + 0x00000007)
+    dd 0              ; mode_type: 0 = linear graphics
+    dd 640            ; width
+    dd 480            ; height
+    dd 32             ; bits per pixel
 
 section .bss
 align 16
