@@ -1,14 +1,22 @@
-; AQ OS - Multiboot v1 header requesting a linear 640x480x32 mode
+; AQ OS - Multiboot v1 header
+; Keep the five address-field slots so GRUB reads graphics fields at offsets 32-44.
 BITS 32
 section .multiboot
 align 4
     dd 0x1BADB002
     dd 0x00000007
     dd -(0x1BADB002 + 0x00000007)
-    dd 0              ; mode_type: 0 = linear graphics
-    dd 640            ; width
-    dd 480            ; height
-    dd 32             ; bits per pixel
+    ; Unused address-field slots (flag 16 is clear)
+    dd 0
+    dd 0
+    dd 0
+    dd 0
+    dd 0
+    ; Graphics fields (flag 2 is set)
+    dd 0
+    dd 640
+    dd 480
+    dd 32
 
 section .bss
 align 16
