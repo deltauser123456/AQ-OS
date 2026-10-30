@@ -27,9 +27,25 @@ static char calc_display[16]="0";
 static char note[256]="AQ OS NOTEPAD - TYPE HERE";
 static int note_len=25, note_saved=1;
 static int file_page=0;
+static uint16_t vbox_port;
+static int vbox_mouse_active;
+
+typedef struct __attribute__((packed)) {
+    uint32_t size, version, request, rc, reserved1, reserved2;
+    uint32_t features;
+    int32_t x, y;
+} vbox_mouse_request_t;
+static volatile vbox_mouse_request_t vbox_mouse_request;
 
 static inline void outb(uint16_t p,uint8_t v){__asm__ volatile("outb %0,%1"::"a"(v),"Nd"(p));}
 static inline uint8_t inb(uint16_t p){uint8_t v;__asm__ volatile("inb %1,%0":"=a"(v):"Nd"(p));return v;}
+static inline uint32_t inl(uint16_t p){uint32_t v;__asm__ volatile("inl %1,%0":"=a"(v):"Nd"(p));return v;}
+static inline void outl(uint16_t p,uint32_t v){__asm__ volatile("outl %0,%1"::"a"(v),"Nd"(p));}
+static void pci_config_addr(uint8_t bus,uint8_t dev,uint8_t fn,uint8_t reg){outl(0xCF8,0x80000000u|((uint32_t)bus<<16)|((uint32_t)dev<<11)|((uint32_t)fn<<8)|(reg&0xFC));}
+static uint32_t pci_read32(uint8_t b,uint8_t d,uint8_t f,uint8_t r){pci_config_addr(b,d,f,r);return inl(0xCFC);}
+static void pci_write32(uint8_t b,uint8_t d,uint8_t f,uint8_t r,uint32_t v){pci_config_addr(b,d,f,r);outl(0xCFC,v);}
+static int vbox_init(void){for(uint32_t b=0;b<256;b++)for(uint32_t d=0;d<32;d++)for(uint32_t f=0;f<8;f++){uint32_t id=pci_read32((uint8_t)b,(uint8_t)d,(uint8_t)f,0);if((id&0xFFFF)==0x80EE&&(id>>16)==0xCAFE){uint32_t bar=pci_read32((uint8_t)b,(uint8_t)d,(uint8_t)f,0x10);if(!(bar&1))return 0;vbox_port=(uint16_t)(bar&0xFFFC);uint32_t cmd=pci_read32((uint8_t)b,(uint8_t)d,(uint8_t)f,4);pci_write32((uint8_t)b,(uint8_t)d,(uint8_t)f,4,cmd|1u);vbox_mouse_request.size=sizeof(vbox_mouse_request);vbox_mouse_request.version=0x00010001;vbox_mouse_request.request=2;vbox_mouse_request.rc=0;vbox_mouse_request.reserved1=0;vbox_mouse_request.reserved2=0;vbox_mouse_request.features=1;vbox_mouse_request.x=0;vbox_mouse_request.y=0;outl(vbox_port,(uint32_t)(uintptr_t)&vbox_mouse_request);vbox_mouse_request.request=1;vbox_mouse_active=1;return 1;}}return 0;}
+static int vbox_poll(void){if(!vbox_mouse_active)return 0;vbox_mouse_request.size=sizeof(vbox_mouse_request);vbox_mouse_request.version=0x00010001;vbox_mouse_request.request=1;vbox_mouse_request.rc=0;vbox_mouse_request.features=0;outl(vbox_port,(uint32_t)(uintptr_t)&vbox_mouse_request);if(vbox_mouse_request.rc==0&&(vbox_mouse_request.features&2)){int nx=(int)(((uint32_t)vbox_mouse_request.x*(screen_w-1))/65535u);int ny=(int)(((uint32_t)vbox_mouse_request.y*(screen_h-1))/65535u);if(nx<0)nx=0;if(ny<0)ny=0;if(nx>=(int)screen_w)nx=(int)screen_w-1;if(ny>=(int)screen_h)ny=(int)screen_h-1;int changed=(nx!=mouse_x||ny!=mouse_y);mouse_x=nx;mouse_y=ny;return changed;}return 0;}
 static void pixel(int x,int y,uint32_t c){if(x>=0&&y>=0&&(uint32_t)x<screen_w&&(uint32_t)y<screen_h)fb[(uint32_t)y*pitch_pixels+(uint32_t)x]=c;}
 static void rect(int x,int y,int w,int h,uint32_t c){if(w<=0||h<=0)return;for(int yy=y;yy<y+h;yy++)for(int xx=x;xx<x+w;xx++)pixel(xx,yy,c);}
 static void outline(int x,int y,int w,int h,uint32_t c){rect(x,y,w,2,c);rect(x,y+h-2,w,2,c);rect(x,y,2,h,c);rect(x+w-2,y,2,h,c);}
@@ -77,5 +93,5 @@ static void mouse_write(uint8_t v){mouse_wait(1);outb(0x64,0xD4);mouse_wait(1);o
 static void mouse_init(void){mouse_wait(1);outb(0x64,0xA8);mouse_wait(1);outb(0x64,0x20);mouse_wait(0);uint8_t s=inb(0x60);s|=2;s&=(uint8_t)~0x20;mouse_wait(1);outb(0x64,0x60);mouse_wait(1);outb(0x60,s);mouse_write(0xF6);mouse_wait(0);(void)inb(0x60);mouse_write(0xF4);mouse_wait(0);(void)inb(0x60);}
 static char keychar(uint8_t s){static const char map[58]={0,0,'1','2','3','4','5','6','7','8','9','0','-','=','\b','\t','q','w','e','r','t','y','u','i','o','p','[',']','\n',0,'a','s','d','f','g','h','j','k','l',';', '\'', '`',0,'\\','z','x','c','v','b','n','m',',','.','/',0,'*',0,' '};if(s>=58)return 0;return map[s];}
 static void keyboard_poll(void){uint8_t status=inb(0x64);if(!(status&1)||(status&0x20))return;uint8_t s=inb(0x60);if(s&0x80)return;if(active_app!=4||!window_open)return;char c=keychar(s);if(c=='\b'){if(note_len>0)note[--note_len]=0;note_saved=0;}else if(c=='\n'){if(note_len<254){note[note_len++]=' ';note[note_len]=0;note_saved=0;}}else if(c>=32&&c<=126&&note_len<254){note[note_len++]=c;note[note_len]=0;note_saved=0;}draw_desktop();}
-static void mouse_poll(void){if((inb(0x64)&0x21)!=0x21)return;uint8_t b=inb(0x60);if(mouse_cycle==0){if(!(b&8))return;mouse_packet[0]=b;mouse_cycle=1;}else if(mouse_cycle==1){mouse_packet[1]=b;mouse_cycle=2;}else{mouse_packet[2]=b;mouse_cycle=0;mouse_x+=(int8_t)mouse_packet[1];mouse_y-=(int8_t)mouse_packet[2];if(mouse_x<0)mouse_x=0;if(mouse_y<0)mouse_y=0;if(mouse_x>=(int)screen_w)mouse_x=(int)screen_w-1;if(mouse_y>=(int)screen_h)mouse_y=(int)screen_h-1;int left=mouse_packet[0]&1;if(left&&!old_left)click(mouse_x,mouse_y);old_left=left;draw_desktop();}}
-void kernel_main(uint32_t magic,multiboot_info_t*mbi){if(magic!=0x2BADB002||!(mbi->flags&(1u<<12))||mbi->framebuffer_bpp!=32||mbi->framebuffer_type!=1){volatile uint16_t*v=(volatile uint16_t*)0xB8000;const char*m="AQ OS: FRAMEBUFFER ERROR";for(int i=0;m[i];i++)v[i]=(uint16_t)(0x0F00|m[i]);for(;;)__asm__ volatile("hlt");}fb=(volatile uint32_t*)(uintptr_t)mbi->framebuffer_addr;screen_w=mbi->framebuffer_width;screen_h=mbi->framebuffer_height;pitch_pixels=mbi->framebuffer_pitch/4;mouse_x=(int)screen_w/2;mouse_y=(int)screen_h/2;draw_desktop();mouse_init();for(;;){keyboard_poll();mouse_poll();}}
+static void mouse_poll(void){if((inb(0x64)&0x21)!=0x21)return;uint8_t b=inb(0x60);if(mouse_cycle==0){if(!(b&8))return;mouse_packet[0]=b;mouse_cycle=1;}else if(mouse_cycle==1){mouse_packet[1]=b;mouse_cycle=2;}else{mouse_packet[2]=b;mouse_cycle=0;if(!vbox_mouse_active){mouse_x+=(int8_t)mouse_packet[1];mouse_y-=(int8_t)mouse_packet[2];}if(mouse_x<0)mouse_x=0;if(mouse_y<0)mouse_y=0;if(mouse_x>=(int)screen_w)mouse_x=(int)screen_w-1;if(mouse_y>=(int)screen_h)mouse_y=(int)screen_h-1;int left=mouse_packet[0]&1;if(left&&!old_left)click(mouse_x,mouse_y);old_left=left;draw_desktop();}}
+void kernel_main(uint32_t magic,multiboot_info_t*mbi){if(magic!=0x2BADB002||!(mbi->flags&(1u<<12))||mbi->framebuffer_bpp!=32||mbi->framebuffer_type!=1){volatile uint16_t*v=(volatile uint16_t*)0xB8000;const char*m="AQ OS: FRAMEBUFFER ERROR";for(int i=0;m[i];i++)v[i]=(uint16_t)(0x0F00|m[i]);for(;;)__asm__ volatile("hlt");}fb=(volatile uint32_t*)(uintptr_t)mbi->framebuffer_addr;screen_w=mbi->framebuffer_width;screen_h=mbi->framebuffer_height;pitch_pixels=mbi->framebuffer_pitch/4;mouse_x=(int)screen_w/2;mouse_y=(int)screen_h/2;draw_desktop();mouse_init();vbox_init();for(;;){keyboard_poll();if(vbox_poll())draw_desktop();mouse_poll();}}
