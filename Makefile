@@ -36,7 +36,7 @@ check: $(KERNEL)
 	grub-file --is-x86-multiboot $(KERNEL)
 
 run: $(ISO)
-	qemu-system-i386 -cdrom $(ISO) -m 128M
+	qemu-system-i386 -cdrom $(ISO) -m 128M -usb -device usb-tablet
 
 clean:
 	rm -rf $(BUILD) $(DIST)
