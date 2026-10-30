@@ -220,12 +220,34 @@ static void mouse_poll(void) {
         draw_desktop();
     }
 }
+static void vga_puts(volatile uint16_t *v, int *pos, const char *s) {
+    while (*s) v[(*pos)++] = (uint16_t)(0x0F00u | (uint8_t)*s++);
+}
+static void vga_hex(volatile uint16_t *v, int *pos, uint32_t n) {
+    const char *digits="0123456789ABCDEF";
+    for (int shift=28; shift>=0; shift-=4)
+        v[(*pos)++] = (uint16_t)(0x0F00u | (uint8_t)digits[(n>>shift)&15]);
+}
 void kernel_main(uint32_t magic, multiboot_info_t *mbi) {
     if (magic!=0x2BADB002 || !(mbi->flags & (1u<<12)) ||
         mbi->framebuffer_bpp!=32 || mbi->framebuffer_type!=1) {
         volatile uint16_t *vga=(volatile uint16_t*)0xB8000;
-        const char *msg="AQ OS: 32-BIT RGB FRAMEBUFFER REQUIRED";
-        for (int i=0;msg[i];i++) vga[i]=(uint16_t)(0x4F00u|(uint8_t)msg[i]);
+        int p=0;
+        vga_puts(vga,&p,"AQ OS BOOT DIAGNOSTICS");
+        p=80;
+        vga_puts(vga,&p,"MAGIC: "); vga_hex(vga,&p,magic);
+        p=160;
+        vga_puts(vga,&p,"FLAGS: "); vga_hex(vga,&p,mbi->flags);
+        p=240;
+        vga_puts(vga,&p,"FRAMEBUFFER ADDRESS LOW: "); vga_hex(vga,&p,(uint32_t)mbi->framebuffer_addr);
+        p=320;
+        vga_puts(vga,&p,"WIDTH: "); vga_hex(vga,&p,mbi->framebuffer_width);
+        vga_puts(vga,&p," HEIGHT: "); vga_hex(vga,&p,mbi->framebuffer_height);
+        p=400;
+        vga_puts(vga,&p,"BPP: "); vga_hex(vga,&p,mbi->framebuffer_bpp);
+        vga_puts(vga,&p," TYPE: "); vga_hex(vga,&p,mbi->framebuffer_type);
+        p=480;
+        vga_puts(vga,&p,"EXPECTED MAGIC 2BADB002, FLAG BIT 12, BPP 20, TYPE 01");
         for (;;) __asm__ volatile("hlt");
     }
     fb=(volatile uint32_t*)(uintptr_t)mbi->framebuffer_addr;
