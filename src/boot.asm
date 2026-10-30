@@ -1,11 +1,14 @@
-; AQ OS - 32-bit Multiboot entry point
+; AQ OS - Multiboot v1 entry with 640x480x32 framebuffer request
 BITS 32
-
 section .multiboot
 align 4
     dd 0x1BADB002
-    dd 0x00000003
-    dd -(0x1BADB002 + 0x00000003)
+    dd 0x00000007
+    dd -(0x1BADB002 + 0x00000007)
+    dd 0
+    dd 640
+    dd 480
+    dd 32
 
 section .bss
 align 16
@@ -21,6 +24,8 @@ _start:
     cli
     mov esp, stack_top
     xor ebp, ebp
+    push ebx
+    push eax
     call kernel_main
 
 .hang:
