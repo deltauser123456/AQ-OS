@@ -40,5 +40,9 @@ make check
 make run
 ```
 
+## AQ Browser networking progress
+
+QEMU now provides an emulated Intel E1000 network adapter connected to user-mode networking. The kernel scans PCI and reports whether the adapter is present. This is device detection only; packet I/O, DHCP, DNS, TCP, HTTP, HTTPS, and webpage rendering are not implemented yet.
+
 ## Important
 This is an educational hobby OS, not a replacement for Windows. Test it in QEMU first; do not write this early prototype to a physical drive. The keyboard map is currently US QWERTY.
