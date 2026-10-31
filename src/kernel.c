@@ -29,12 +29,30 @@ static char calc_display[16]="0";
 static char note[256]="AQ OS NOTEPAD - TYPE HERE";
 static int note_len=25, note_saved=1;
 static int file_page=0;
+static int nic_found=0, nic_bus=-1, nic_dev=-1, nic_fn=-1;
 static char trans_in[96]="HOLA"; static int trans_len=4;
 static char web_addr[96]="aqos://home"; static int web_len=11; static int web_page=0;
 static inline void outb(uint16_t p,uint8_t v){__asm__ volatile("outb %0,%1"::"a"(v),"Nd"(p));}
 static inline uint8_t inb(uint16_t p){uint8_t v;__asm__ volatile("inb %1,%0":"=a"(v):"Nd"(p));return v;}
 static inline uint32_t inl(uint16_t p){uint32_t v;__asm__ volatile("inl %1,%0":"=a"(v):"Nd"(p));return v;}
 static inline void outl(uint16_t p,uint32_t v){__asm__ volatile("outl %0,%1"::"a"(v),"Nd"(p));}
+/* PCI configuration mechanism #1: locate QEMU's Intel 82540EM (e1000). */
+static uint32_t pci_read32(uint8_t bus,uint8_t dev,uint8_t fn,uint8_t off){
+ uint32_t address=0x80000000u|((uint32_t)bus<<16)|((uint32_t)dev<<11)|((uint32_t)fn<<8)|(off&0xFC);
+ outl(0xCF8,address); return inl(0xCFC);
+}
+static void pci_scan_network(void){
+ nic_found=0; nic_bus=nic_dev=nic_fn=-1;
+ for(uint16_t bus=0;bus<256;bus++) for(uint8_t dev=0;dev<32;dev++){
+  uint32_t id=pci_read32((uint8_t)bus,dev,0,0);
+  if((id&0xFFFFu)==0xFFFFu) continue;
+  uint8_t functions=(pci_read32((uint8_t)bus,dev,0,0x0C)&0x00800000u)?8:1;
+  for(uint8_t fn=0;fn<functions;fn++){
+   id=pci_read32((uint8_t)bus,dev,fn,0);
+   if((id&0xFFFFu)==0x8086u && (id>>16)==0x100Eu){nic_found=1;nic_bus=bus;nic_dev=dev;nic_fn=fn;return;}
+  }
+ }
+}
 static void pixel(int x,int y,uint32_t c){if(x>=0&&y>=0&&(uint32_t)x<screen_w&&(uint32_t)y<screen_h)fb[(uint32_t)y*pitch_pixels+(uint32_t)x]=c;}
 static void rect(int x,int y,int w,int h,uint32_t c){if(w<=0||h<=0)return;for(int yy=y;yy<y+h;yy++)for(int xx=x;xx<x+w;xx++)pixel(xx,yy,c);}
 static void outline(int x,int y,int w,int h,uint32_t c){rect(x,y,w,2,c);rect(x,y+h-2,w,2,c);rect(x,y,2,h,c);rect(x+w-2,y,2,h,c);}
@@ -302,7 +320,7 @@ if(streq(w,"BUENAS"))return "GOOD";
 if(streq(w,"TARDES"))return "AFTERNOONS";
 return "?";}
 static void draw_trans(int x,int y){uint32_t fg=dark_mode?0x00FFFFFF:0,hd=dark_mode?0x0080C0FF:0x00000080;text(x+18,y+48,"SPANISH TO ENGLISH",hd,2);text(x+20,y+78,"TYPE SPANISH:",fg,1);rect(x+18,y+92,310,34,dark_mode?0x00303030:0x00F0F0F0);outline(x+18,y+92,310,34,0x00808080);text(x+24,y+105,trans_in,fg,1);text(x+20,y+143,"ENGLISH:",hd,1);rect(x+18,y+157,310,68,dark_mode?0x00303030:0x00F0F0F0);outline(x+18,y+157,310,68,0x00808080);char word[24];int n=0,ox=x+24,oy=y+171;for(int i=0;i<=trans_len;i++){char ch=trans_in[i];if(ch>='a'&&ch<='z')ch-=32;if(ch>='A'&&ch<='Z'){if(n<22)word[n++]=ch;}else if(n){word[n]=0;const char*r=trword(word);text(ox,oy,r,fg,1);ox+=(int)slen(r)*6+7;if(ox>x+310){ox=x+24;oy+=12;}n=0;}if(ch=='?'||ch=='!'||ch=='.'){text(ox,oy,(char[2]){ch,0},fg,1);ox+=8;}}text(x+20,y+242,"BACKSPACE TO EDIT",fg,1);}
-static void draw_browser(int x,int y){uint32_t fg=dark_mode?0x00FFFFFF:0,hd=dark_mode?0x0080C0FF:0x00000080;text(x+18,y+48,"AQ BROWSER",hd,2);rect(x+18,y+72,270,27,dark_mode?0x00303030:0x00FFFFFF);outline(x+18,y+72,270,27,0x00808080);text(x+24,y+82,web_addr,fg,1);button(x+294,y+72,48,27,"GO");rect(x+18,y+108,324,145,dark_mode?0x00303030:0x00FFFFFF);outline(x+18,y+108,324,145,0x00808080);if(web_page==0){text(x+30,y+125,"WELCOME TO AQ BROWSER",hd,1);text(x+30,y+150,"LOCAL HOME PAGE",fg,1);text(x+30,y+175,"INTERNET NOT CONNECTED",fg,1);}else{text(x+30,y+125,"PAGE NOT AVAILABLE",hd,1);text(x+30,y+150,"NETWORK SUPPORT IS NOT",fg,1);text(x+30,y+162,"IMPLEMENTED IN AQ OS YET",fg,1);text(x+30,y+190,"TRY aqos://home",fg,1);}text(x+20,y+270,"TYPE URL THEN CLICK GO",fg,1);}
+static void draw_browser(int x,int y){uint32_t fg=dark_mode?0x00FFFFFF:0,hd=dark_mode?0x0080C0FF:0x00000080;text(x+18,y+48,"AQ BROWSER",hd,2);rect(x+18,y+72,270,27,dark_mode?0x00303030:0x00FFFFFF);outline(x+18,y+72,270,27,0x00808080);text(x+24,y+82,web_addr,fg,1);button(x+294,y+72,48,27,"GO");rect(x+18,y+108,324,145,dark_mode?0x00303030:0x00FFFFFF);outline(x+18,y+108,324,145,0x00808080);if(web_page==0){text(x+30,y+125,"WELCOME TO AQ BROWSER",hd,1);text(x+30,y+150,"HTTP BROWSER IN DEVELOPMENT",fg,1);}else{text(x+30,y+125,"PAGE NOT LOADED",hd,1);text(x+30,y+150,"HTTP AND DNS NOT READY YET",fg,1);}text(x+30,y+190,nic_found?"E1000 NETWORK CARD FOUND":"NO E1000 NETWORK CARD",nic_found?0x00008000:0x00800000,1);text(x+20,y+270,"NEXT: DRIVER, DHCP, DNS AND HTTP",fg,1);}
 
 static void draw_settings(int x,int y){uint32_t fg=dark_mode?0x00FFFFFF:0x00000000;uint32_t heading=dark_mode?0x0080C0FF:0x00000080;text(x+18,y+48,"PERSONALIZATION",heading,2);text(x+20,y+80,"DESKTOP COLOR",fg,1);button(x+20,y+103,90,32,"BLUE");button(x+118,y+103,90,32,"GREEN");button(x+216,y+103,90,32,"PURPLE");text(x+20,y+160,"AQ OS 0.3",heading,2);text(x+20,y+185,"MOUSE: PS/2 FALLBACK",fg,1);text(x+20,y+202,"APPS STORE DATA IN RAM",fg,1);text(x+20,y+230,"APPEARANCE",heading,1);button(x+20,y+245,110,30,dark_mode?"DARK: ON":"DARK: OFF");button(x+142,y+245,100,30,"RESET");}
 static void draw_window(void){if(!window_open)return;int x=90,y=38,w=(int)screen_w-125,h=(int)screen_h-90;if(w<370)w=370;if(h<320)h=320;rect(x+5,y+5,w,h,0x00404040);rect(x,y,w,h,0x00C0C0C0);outline(x,y,w,h,0x00FFFFFF);rect(x+3,y+3,w-6,25,0x00000080);const char*t=active_app==0?"FILE MANAGER":active_app==1?"RECYCLE BIN":active_app==2?"SETTINGS":active_app==3?"CALCULATOR":active_app==4?"NOTEPAD":active_app==5?"TRANSLATOR":"AQ BROWSER";text(x+12,y+11,t,0x00FFFFFF,1);button(x+w-29,y+7,24,19,"X");rect(x+8,y+35,w-16,h-43,dark_mode?0x00202020:0x00FFFFFF);if(active_app==0)draw_files(x,y);else if(active_app==1){text(x+20,y+65,"RECYCLE BIN",0x00000080,2);text(x+20,y+100,"THE BIN IS EMPTY",0,1);}else if(active_app==2)draw_settings(x,y);else if(active_app==3)draw_calc(x,y);else if(active_app==4)draw_note(x,y);else if(active_app==5)draw_trans(x,y);else draw_browser(x,y);}
@@ -317,4 +335,4 @@ static void mouse_init(void){mouse_wait(1);outb(0x64,0xA8);mouse_wait(1);outb(0x
 static char keychar(uint8_t s){static const char map[58]={0,0,'1','2','3','4','5','6','7','8','9','0','-','=','\b','\t','q','w','e','r','t','y','u','i','o','p','[',']','\n',0,'a','s','d','f','g','h','j','k','l',';', '\'', '`',0,'\\','z','x','c','v','b','n','m',',','.','/',0,'*',0,' '};if(s>=58)return 0;return map[s];}
 static void keyboard_poll(void){uint8_t status=inb(0x64);if(!(status&1)||(status&0x20))return;uint8_t s=inb(0x60);if(s&0x80)return;if(!window_open)return;char c=keychar(s);if(active_app==5){if(c=='\b'){if(trans_len>0)trans_in[--trans_len]=0;}else if(c>=32&&c<=126&&trans_len<94){trans_in[trans_len++]=c;trans_in[trans_len]=0;}draw_desktop();return;}if(active_app==6){if(c=='\b'){if(web_len>0)web_addr[--web_len]=0;}else if(c>=32&&c<=126&&web_len<94){web_addr[web_len++]=c;web_addr[web_len]=0;}else if(c=='\n')web_page=1;draw_desktop();return;}if(active_app!=4)return;if(c=='\b'){if(note_len>0)note[--note_len]=0;note_saved=0;}else if(c=='\n'){if(note_len<254){note[note_len++]=' ';note[note_len]=0;note_saved=0;}}else if(c>=32&&c<=126&&note_len<254){note[note_len++]=c;note[note_len]=0;note_saved=0;}draw_desktop();}
 static void mouse_poll(void){if((inb(0x64)&0x21)!=0x21)return;uint8_t b=inb(0x60);if(mouse_cycle==0){if(!(b&8))return;mouse_packet[0]=b;mouse_cycle=1;}else if(mouse_cycle==1){mouse_packet[1]=b;mouse_cycle=2;}else{mouse_packet[2]=b;mouse_cycle=0;int old_x=mouse_x,old_y=mouse_y;cursor_erase();mouse_x+=(int8_t)mouse_packet[1];mouse_y-=(int8_t)mouse_packet[2];if(mouse_x<0)mouse_x=0;if(mouse_y<0)mouse_y=0;if(mouse_x>=(int)screen_w)mouse_x=(int)screen_w-1;if(mouse_y>=(int)screen_h)mouse_y=(int)screen_h-1;int left=mouse_packet[0]&1;int pressed=left&&!old_left;if(pressed)click(mouse_x,mouse_y);old_left=left;if(pressed)draw_desktop();else if(mouse_x!=old_x||mouse_y!=old_y){cursor_draw();}else{cursor_draw();}}}
-void kernel_main(uint32_t magic,multiboot_info_t*mbi){if(magic!=0x2BADB002||!(mbi->flags&(1u<<12))||mbi->framebuffer_bpp!=32||mbi->framebuffer_type!=1){volatile uint16_t*v=(volatile uint16_t*)0xB8000;const char*m="AQ OS: FRAMEBUFFER ERROR";for(int i=0;m[i];i++)v[i]=(uint16_t)(0x0F00|m[i]);for(;;)__asm__ volatile("hlt");}fb=(volatile uint32_t*)(uintptr_t)mbi->framebuffer_addr;screen_w=mbi->framebuffer_width;screen_h=mbi->framebuffer_height;pitch_pixels=mbi->framebuffer_pitch/4;mouse_x=(int)screen_w/2;mouse_y=(int)screen_h/2;draw_desktop();mouse_init();for(;;){keyboard_poll();mouse_poll();}}
+void kernel_main(uint32_t magic,multiboot_info_t*mbi){if(magic!=0x2BADB002||!(mbi->flags&(1u<<12))||mbi->framebuffer_bpp!=32||mbi->framebuffer_type!=1){volatile uint16_t*v=(volatile uint16_t*)0xB8000;const char*m="AQ OS: FRAMEBUFFER ERROR";for(int i=0;m[i];i++)v[i]=(uint16_t)(0x0F00|m[i]);for(;;)__asm__ volatile("hlt");}fb=(volatile uint32_t*)(uintptr_t)mbi->framebuffer_addr;screen_w=mbi->framebuffer_width;screen_h=mbi->framebuffer_height;pitch_pixels=mbi->framebuffer_pitch/4;pci_scan_network();mouse_x=(int)screen_w/2;mouse_y=(int)screen_h/2;draw_desktop();mouse_init();for(;;){keyboard_poll();mouse_poll();}}
